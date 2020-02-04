@@ -42,7 +42,7 @@ struct Item {
     static const int MAX_NAME = 24;
     static const int MIN_DATA = 26;
     static const int MAX_DATA = 50;
-    static const int NUM_ITEMS = 100000;
+    static const int NUM_ITEMS = 1000;
 
     int32_t i_id;
     int32_t i_im_id;
@@ -79,7 +79,7 @@ struct District {
     static const int INITIAL_NEXT_O_ID = 3001;
     static const int MIN_NAME = 6;
     static const int MAX_NAME = 10;
-    static const int NUM_PER_WAREHOUSE = 10;
+    static const int NUM_PER_WAREHOUSE = 2;
 
     int32_t d_id;
     int32_t d_w_id;
@@ -100,7 +100,7 @@ struct Stock {
     static const int DIST = 24;
     static const int MIN_DATA = 26;
     static const int MAX_DATA = 50;
-    static const int NUM_STOCK_PER_WAREHOUSE = 100000;
+    static const int NUM_STOCK_PER_WAREHOUSE = 1000;
 
     int32_t s_i_id;
     int32_t s_w_id;
@@ -132,7 +132,7 @@ struct Customer {
     static const int CREDIT = 2;
     static const int MIN_DATA = 300;
     static const int MAX_DATA = 500;
-    static const int NUM_PER_DISTRICT = 3000;
+    static const int NUM_PER_DISTRICT = 30;
     static const char GOOD_CREDIT[];
     static const char BAD_CREDIT[];
 
@@ -169,7 +169,7 @@ struct Order {
     static const int MIN_OL_CNT = 5;
     static const int MAX_OL_CNT = 15;
     static const int INITIAL_ALL_LOCAL = 1;
-    static const int INITIAL_ORDERS_PER_DISTRICT = 3000;
+    static const int INITIAL_ORDERS_PER_DISTRICT = 30;
     // See TPC-C 1.3.1 (page 15)
     static const int MAX_ORDER_ID = 10000000;
 
@@ -185,7 +185,7 @@ struct Order {
 
 struct OrderLine {
     static const int MIN_I_ID = 1;
-    static const int MAX_I_ID = 100000;  // Item::NUM_ITEMS
+    static const int MAX_I_ID = 1000;  // Item::NUM_ITEMS
     static const int INITIAL_QUANTITY = 5;
     static constexpr float MIN_AMOUNT = 0.01f;
     static constexpr float MAX_AMOUNT = 9999.99f;
@@ -205,7 +205,7 @@ struct OrderLine {
 };
 
 struct NewOrder {
-    static const int INITIAL_NUM_PER_DISTRICT = 900;
+    static const int INITIAL_NUM_PER_DISTRICT = 9;
 
     int32_t no_w_id;
     int32_t no_d_id;

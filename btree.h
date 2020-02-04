@@ -28,11 +28,20 @@ On older Linux systems, this is required for glibc to define std::posix_memalign
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <algorithm>
 
 // DEBUG
 #include <iostream>
 using std::cout;
 using std::endl;
+
+
+#define _mm_clwb(p)\
+  __asm__ __volatile__ ("mcr p15, 0, %0, c7, c10, 1;" : : "r" (p) : "memory")
+
+
+#define __dmb()\
+  asm volatile ("dmb" ::: "memory") 
 
 // Recent Mac OS X includes posix_memalign: If you are using an ancient version,
 // undefine this
@@ -43,7 +52,7 @@ using std::endl;
 #else
 // TODO: This is not aligned! It doesn't matter for this implementation, but it could
 static inline int posix_memalign(void** result, int, size_t bytes) {
-    *result = malloc(bytes);
+    *result = (void*) aligned_alloc(64,bytes); //malloc(bytes);
     return *result == NULL;
 }
 #endif
@@ -56,9 +65,12 @@ class BPlusTree
 public:
         // Builds a new empty tree.
         BPlusTree()
-        : depth(0),
-          root(new LeafNode())
+        : depth(0)/*,
+		    root(new LeafNode())*/
         {
+	        root = (void *) aligned_alloc(64, sizeof(LeafNode));
+		//new InnerNode();
+		new (root) LeafNode();
                 // Previously used BOOST_STATIC_ASSERT:
                 // N must be greater than two to make the split of
                 // two inner nodes sensible.
@@ -97,13 +109,22 @@ public:
                         // The old root was splitted in two parts.
                         // We have to create a new root pointing to them
                         depth++;
-                        root= new InnerNode();
+                        root = (void *) aligned_alloc(64, sizeof(InnerNode));
+			//new InnerNode();
+			new (root) InnerNode();
                         InnerNode* rootProxy=
                                 reinterpret_cast<InnerNode*>(root);
                         rootProxy->num_keys= 1;
                         rootProxy->keys[0]= result.key;
                         rootProxy->children[0]= result.left;
                         rootProxy->children[1]= result.right;
+			
+			_mm_clwb(&rootProxy->num_keys);
+			_mm_clwb(&rootProxy->keys[0]);
+			_mm_clwb(&rootProxy->children[0]);
+			_mm_clwb(&rootProxy->children[1]);
+			_mm_clwb(&depth);
+			__dmb();
                 }
         }
 
@@ -157,6 +178,8 @@ bool del(const KEY& key) {
   index= leaf_position_for(key, leaf->keys, leaf->num_keys);
   if( leaf->keys[index] == key ) {
     leaf->values[index] = 0;
+    _mm_clwb(&leaf->values[index]);
+    __dmb();
     return true;
   } else {
     return false;
@@ -342,14 +365,21 @@ private:
                 if( node->num_keys == M ) {
                         // The node was full. We must split it
                         unsigned treshold= (M+1)/2;
-                        LeafNode* new_sibling= new LeafNode();
+                        LeafNode* new_sibling = (LeafNode *) aligned_alloc(64, sizeof(LeafNode));
+			//new InnerNode();
+			new (new_sibling) LeafNode();
                         new_sibling->num_keys= node->num_keys -treshold;
                         for(unsigned j=0; j < new_sibling->num_keys; ++j) {
                                 new_sibling->keys[j]= node->keys[treshold+j];
                                 new_sibling->values[j]=
                                         node->values[treshold+j];
+				_mm_clwb(&new_sibling->keys[j]);
+				__dmb();
                         }
                         node->num_keys= treshold;
+			_mm_clwb(&new_sibling->num_keys);
+			_mm_clwb(&node->num_keys);
+			__dmb();
                         if( i < treshold ) {
                                 // Inserted element goes to left sibling
                                 leaf_insert_nonfull(node, key, value, i);
@@ -363,6 +393,8 @@ private:
                         result->key= new_sibling->keys[0];
                         result->left= node;
                         result->right= new_sibling;
+			_mm_clwb(&result->key);
+			__dmb();
                 } else {
                         // The node was not full
                         leaf_insert_nonfull(node, key, value, i);
@@ -380,15 +412,24 @@ private:
                         // We are inserting a duplicate value.
                         // Simply overwrite the old one
                         node->values[index]= value;
+			_mm_clwb(&node->values[index]);
+			__dmb();
                 } else {
                         // The key we are inserting is unique
                         for(unsigned i=node->num_keys; i > index; --i) {
                                 node->keys[i]= node->keys[i-1];
                                 node->values[i]= node->values[i-1];
+				_mm_clwb(&node->keys[i]);
+				_mm_clwb(&node->values[i]);
+				__dmb();
                         }
                         node->num_keys++;
                         node->keys[index]= key;
                         node->values[index]= value;
+			_mm_clwb(&node->num_keys);
+			//_mm_clwb(&node->keys[index]);
+			//_mm_clwb(&node->values[index]);
+			__dmb();
                 }
         }
 
@@ -403,12 +444,17 @@ private:
                 if( node->num_keys == N ) {
                         // Split
                         unsigned treshold= (N+1)/2;
-                        InnerNode* new_sibling= new InnerNode();
+                        InnerNode* new_sibling = (InnerNode *) aligned_alloc(64, sizeof(InnerNode));
+			//new InnerNode();
+			new (new_sibling) InnerNode();
                         new_sibling->num_keys= node->num_keys -treshold;
                         for(unsigned i=0; i < new_sibling->num_keys; ++i) {
                                 new_sibling->keys[i]= node->keys[treshold+i];
                                 new_sibling->children[i]=
                                         node->children[treshold+i];
+				_mm_clwb(&new_sibling->keys[i]);
+				_mm_clwb(&new_sibling->children[i]);
+				__dmb();
                         }
                         new_sibling->children[new_sibling->num_keys]=
                                 node->children[node->num_keys];
@@ -418,6 +464,13 @@ private:
                         result->key= node->keys[treshold-1];
                         result->left= node;
                         result->right= new_sibling;
+			//_mm_clwb(&new_sibling->num_keys);
+			_mm_clwb(&new_sibling->children[new_sibling->num_keys]);
+			_mm_clwb(&node->num_keys);
+			_mm_clwb(&result->key);
+			////_mm_clwb(&result->left);
+			////_mm_clwb(&result->right);
+			__dmb();
                         // Now insert in the appropriate sibling
                         if( key < result->key ) {
                                 inner_insert_nonfull(node, current_depth, key, value);
@@ -469,6 +522,11 @@ private:
                                 node->children[index]= result.left;
                                 node->children[index+1]= result.right;
                                 node->num_keys++;
+				_mm_clwb(&node->keys[index]);
+				_mm_clwb(&node->children[index]);
+				//_mm_clwb(&node->children[index+1]);
+				_mm_clwb(&node->num_keys);
+				__dmb();
                         } else {
                                 // Insertion not at the rightmost key
                                 node->children[node->num_keys+1]=
@@ -476,11 +534,18 @@ private:
                                 for(unsigned i=node->num_keys; i!=index; --i) {
                                         node->children[i]= node->children[i-1];
                                         node->keys[i]= node->keys[i-1];
+					/*_mm_clwb(&node->children[i]);
+					_mm_clwb(&node->keys[i]);
+					__dmb();*/
                                 }
                                 node->children[index]= result.left;
                                 node->children[index+1]= result.right;
                                 node->keys[index]= result.key;
                                 node->num_keys++;
+				_mm_clwb(&node->children[index]);
+				//_mm_clwb(&node->children[index+1]);
+				_mm_clwb(&node->num_keys);
+				__dmb();
                         }
                 } // else the current node is not affected
         }

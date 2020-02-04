@@ -117,9 +117,9 @@ private:
 
     // Allocates an undo buffer if needed, storing the pointer in *undo.
     void allocateUndo(TPCCUndo** undo) {
-        if (undo != NULL && *undo == NULL) {
+      /*if (undo != NULL && *undo == NULL) {
             *undo = new TPCCUndo();
-        }
+	    }*/
     }
 
     // TODO: Use a data structure that supports deletes, appends, and sparse ranges.

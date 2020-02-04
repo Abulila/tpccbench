@@ -8,6 +8,9 @@
 #include "assert.h"
 #include "stlutil.h"
 
+
+#include "m5ops.h"
+
 using std::vector;
 
 bool CustomerByNameOrdering::operator()(const Customer* a, const Customer* b) {
@@ -161,8 +164,11 @@ bool TPCCTables::newOrder(int32_t warehouse_id, int32_t district_id, int32_t cus
         const std::vector<NewOrderItem>& items, const char* now, NewOrderOutput* output,
         TPCCUndo** undo) {
     // perform the home part
+    gg_set_tx();
     bool result = newOrderHome(warehouse_id, district_id, customer_id, items, now, output, undo);
     if (!result) {
+      //__dmb();
+      gg_reset_tx();
         return false;
     }
 
@@ -174,7 +180,8 @@ bool TPCCTables::newOrder(int32_t warehouse_id, int32_t district_id, int32_t cus
         assert(result);
         newOrderCombine(quantities, output);
     }
-
+    //__dmb();
+    gg_reset_tx();
     return true;
 }
 
@@ -356,20 +363,26 @@ void TPCCTables::payment(int32_t warehouse_id, int32_t district_id, int32_t c_wa
         int32_t c_district_id, int32_t customer_id, float h_amount, const char* now,
         PaymentOutput* output, TPCCUndo** undo) {
     //~ printf("payment %d %d %d %d %d %f %s\n", warehouse_id, district_id, c_warehouse_id, c_district_id, customer_id, h_amount, now);
+    gg_set_tx();
     Customer* customer = findCustomer(c_warehouse_id, c_district_id, customer_id);
     paymentHome(warehouse_id, district_id, c_warehouse_id, c_district_id, customer_id, h_amount,
             now, output, undo);
     internalPaymentRemote(warehouse_id, district_id, customer, h_amount, output, undo);
+    //__dmb();
+    gg_reset_tx();
 }
 
 void TPCCTables::payment(int32_t warehouse_id, int32_t district_id, int32_t c_warehouse_id,
         int32_t c_district_id, const char* c_last, float h_amount, const char* now,
         PaymentOutput* output, TPCCUndo** undo) {
     //~ printf("payment %d %d %d %d %s %f %s\n", warehouse_id, district_id, c_warehouse_id, c_district_id, c_last, h_amount, now);
+    gg_set_tx();
     Customer* customer = findCustomerByName(c_warehouse_id, c_district_id, c_last);
     paymentHome(warehouse_id, district_id, c_warehouse_id, c_district_id, customer->c_id, h_amount,
             now, output, undo);
     internalPaymentRemote(warehouse_id, district_id, customer, h_amount, output, undo);
+    //__dmb();
+    gg_reset_tx();
 }
 
 #define COPY_ADDRESS(src, dest, prefix) \
@@ -396,16 +409,22 @@ static void zeroWarehouseDistrict(PaymentOutput* output) {
 void TPCCTables::paymentRemote(int32_t warehouse_id, int32_t district_id, int32_t c_warehouse_id,
         int32_t c_district_id, int32_t c_id, float h_amount, PaymentOutput* output,
         TPCCUndo** undo) {
+    gg_set_tx();
     Customer* customer = findCustomer(c_warehouse_id, c_district_id, c_id);
     internalPaymentRemote(warehouse_id, district_id, customer, h_amount, output, undo);
     zeroWarehouseDistrict(output);
+    //__dmb();
+    gg_reset_tx();
 }
 void TPCCTables::paymentRemote(int32_t warehouse_id, int32_t district_id, int32_t c_warehouse_id,
         int32_t c_district_id, const char* c_last, float h_amount, PaymentOutput* output,
         TPCCUndo** undo) {
+    gg_set_tx();
     Customer* customer = findCustomerByName(c_warehouse_id, c_district_id, c_last);
     internalPaymentRemote(warehouse_id, district_id, customer, h_amount, output, undo);
     zeroWarehouseDistrict(output);
+    //__dmb();
+    gg_reset_tx();
 }
 
 void TPCCTables::paymentHome(int32_t warehouse_id, int32_t district_id, int32_t c_warehouse_id,
@@ -510,6 +529,7 @@ static int64_t makeNewOrderKey(int32_t w_id, int32_t d_id, int32_t o_id);
 void TPCCTables::delivery(int32_t warehouse_id, int32_t carrier_id, const char* now,
         std::vector<DeliveryOrderInfo>* orders, TPCCUndo** undo) {
     //~ printf("delivery %d %d %s\n", warehouse_id, carrier_id, now);
+    gg_set_tx();
     allocateUndo(undo);
     orders->clear();
     for (int32_t d_id = 1; d_id <= District::NUM_PER_WAREHOUSE; ++d_id) {
@@ -567,6 +587,8 @@ void TPCCTables::delivery(int32_t warehouse_id, int32_t carrier_id, const char* 
         c->c_balance += total;
         c->c_delivery_cnt += 1;
     }
+    //__dmb();
+    gg_reset_tx();
 }
 
 template <typename T>

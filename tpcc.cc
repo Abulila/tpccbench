@@ -13,15 +13,32 @@
 #include "tpccgenerator.h"
 #include "tpcctables.h"
 
+#include "m5ops.h"
 
-static const int NUM_TRANSACTIONS = 200000;
+
+void * log_ptr;
+
+static const int NUM_TRANSACTIONS = 4096;
 
 int main(int argc, const char* argv[]) {
     if (argc != 2) {
         fprintf(stderr, "tpcc [num warehouses]\n");
         exit(1);
     }
+    /*
+    log_ptr = (int **) malloc(1 * sizeof(int *));
 
+    for (int i = 0; i < 1; i++) {
+      log_ptr[i] = (int *) aligned_alloc(4096, 512 * 4096);
+    }
+    */
+
+    log_ptr = (void *) aligned_alloc(4096, 8 * 4096);
+    
+    m5_gg_log_alloc((uint64_t) log_ptr,
+		    (uint64_t) 8 * 4096);
+    __dmb();
+    
     long num_warehouses = strtol(argv[1], NULL, 10);
     if (num_warehouses == LONG_MIN || num_warehouses == LONG_MAX) {
         fprintf(stderr, "Bad warehouse number (%s)\n", argv[1]);
@@ -36,11 +53,17 @@ int main(int argc, const char* argv[]) {
         exit(1);
     }
 
-    TPCCTables* tables = new TPCCTables();
-    SystemClock* clock = new SystemClock();
+    TPCCTables* tables = (TPCCTables*) aligned_alloc(64, sizeof(TPCCTables));
+    new (tables) TPCCTables();
+      //new TPCCTables();
+    SystemClock* clock = (SystemClock*) aligned_alloc(64, sizeof(SystemClock));
+    new (clock) SystemClock();
+      //new SystemClock();
 
     // Create a generator for filling the database.
-    tpcc::RealRandomGenerator* random = new tpcc::RealRandomGenerator();
+    tpcc::RealRandomGenerator* random = (tpcc::RealRandomGenerator*) aligned_alloc(64, sizeof(tpcc::RealRandomGenerator));
+    new (random) tpcc::RealRandomGenerator();
+      //new tpcc::RealRandomGenerator();
     tpcc::NURandC cLoad = tpcc::NURandC::makeRandom(random);
     random->setC(cLoad);
 
@@ -60,7 +83,9 @@ int main(int argc, const char* argv[]) {
     printf("%" PRId64 " ms\n", (end - begin + 500)/1000);
 
     // Change the constants for run
-    random = new tpcc::RealRandomGenerator();
+    random = (tpcc::RealRandomGenerator*) aligned_alloc(64, sizeof(tpcc::RealRandomGenerator));
+    new (random) tpcc::RealRandomGenerator();
+    //new tpcc::RealRandomGenerator();
     random->setC(tpcc::NURandC::makeRandomForRun(random, cLoad));
 
     // Client owns all the parameters
@@ -69,10 +94,14 @@ int main(int argc, const char* argv[]) {
     printf("Running... ");
     fflush(stdout);
     begin = clock->getMicroseconds();
+    m5_dump_stats(0,0);
+    m5_reset_stats(0, 0);
     for (int i = 0; i < NUM_TRANSACTIONS; ++i) {
         client.doOne();
     }
+    m5_dump_stats(0, 0);
     end = clock->getMicroseconds();
+    
     int64_t microseconds = end - begin;
     printf("%d transactions in %" PRId64 " ms = %f txns/s\n", NUM_TRANSACTIONS,
             (microseconds + 500)/1000, NUM_TRANSACTIONS / (double) microseconds * 1000000.0);

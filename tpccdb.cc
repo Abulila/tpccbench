@@ -45,47 +45,51 @@ static void copyIfNeeded(typename std::unordered_map<T*, T*>* map, T* source) {
 }
 
 void TPCCUndo::save(Warehouse* w) {
-    copyIfNeeded(&modified_warehouses_, w);
+  //copyIfNeeded(&modified_warehouses_, w);
 }
 void TPCCUndo::save(District* d) {
-    copyIfNeeded(&modified_districts_, d);
+  //copyIfNeeded(&modified_districts_, d);
 }
 void TPCCUndo::save(Customer* c) {
-    copyIfNeeded(&modified_customers_, c);
+  //copyIfNeeded(&modified_customers_, c);
 }
 void TPCCUndo::save(Stock* s) {
-    copyIfNeeded(&modified_stock_, s);
+  //copyIfNeeded(&modified_stock_, s);
 }
 void TPCCUndo::save(Order* o) {
-    copyIfNeeded(&modified_orders_, o);
+  //copyIfNeeded(&modified_orders_, o);
 }
 void TPCCUndo::save(OrderLine* ol) {
-    copyIfNeeded(&modified_order_lines_, ol);
+  //copyIfNeeded(&modified_order_lines_, ol);
 }
 
 void TPCCUndo::inserted(const Order* o) {
+  /*
     assert(inserted_orders_.find(o) == inserted_orders_.end());
     inserted_orders_.insert(o);
+  */
 }
 void TPCCUndo::inserted(const OrderLine* ol) {
-    assert(inserted_order_lines_.find(ol) == inserted_order_lines_.end());
-    inserted_order_lines_.insert(ol);
+  /*assert(inserted_order_lines_.find(ol) == inserted_order_lines_.end());
+    inserted_order_lines_.insert(ol);*/
 }
 void TPCCUndo::inserted(const NewOrder* no) {
-    assert(inserted_new_orders_.find(no) == inserted_new_orders_.end());
-    inserted_new_orders_.insert(no);
+  /*assert(inserted_new_orders_.find(no) == inserted_new_orders_.end());
+    inserted_new_orders_.insert(no);*/
 }
 void TPCCUndo::inserted(const History* h) {
-    assert(inserted_history_.find(h) == inserted_history_.end());
-    inserted_history_.insert(h);
+  /*    assert(inserted_history_.find(h) == inserted_history_.end());
+	inserted_history_.insert(h);*/
 }
 void TPCCUndo::deleted(NewOrder* no) {
-    assert(deleted_new_orders_.find(no) == deleted_new_orders_.end());
-    deleted_new_orders_.insert(no);
+  /*    assert(deleted_new_orders_.find(no) == deleted_new_orders_.end());
+	deleted_new_orders_.insert(no);*/
 }
 
 void TPCCUndo::applied() {
+  /*
     deleted_new_orders_.clear();
+  */
 }
 
 TPCCDB::WarehouseSet TPCCDB::newOrderRemoteWarehouses(int32_t home_warehouse,
