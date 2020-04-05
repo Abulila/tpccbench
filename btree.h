@@ -369,15 +369,18 @@ private:
 			//new InnerNode();
 			new (new_sibling) LeafNode();
                         new_sibling->num_keys= node->num_keys -treshold;
+			_mm_clwb(&new_sibling->num_keys);
+			__dmb();
                         for(unsigned j=0; j < new_sibling->num_keys; ++j) {
                                 new_sibling->keys[j]= node->keys[treshold+j];
                                 new_sibling->values[j]=
                                         node->values[treshold+j];
 				_mm_clwb(&new_sibling->keys[j]);
+				_mm_clwb(&new_sibling->values[j]);
 				__dmb();
                         }
                         node->num_keys= treshold;
-			_mm_clwb(&new_sibling->num_keys);
+			//_mm_clwb(&new_sibling->num_keys);
 			_mm_clwb(&node->num_keys);
 			__dmb();
                         if( i < treshold ) {
@@ -427,8 +430,9 @@ private:
                         node->keys[index]= key;
                         node->values[index]= value;
 			_mm_clwb(&node->num_keys);
-			//_mm_clwb(&node->keys[index]);
-			//_mm_clwb(&node->values[index]);
+			//__dmb();
+			_mm_clwb(&node->keys[index]);
+			_mm_clwb(&node->values[index]);
 			__dmb();
                 }
         }
@@ -448,6 +452,9 @@ private:
 			//new InnerNode();
 			new (new_sibling) InnerNode();
                         new_sibling->num_keys= node->num_keys -treshold;
+			_mm_clwb(&new_sibling->num_keys);
+			__dmb();
+			
                         for(unsigned i=0; i < new_sibling->num_keys; ++i) {
                                 new_sibling->keys[i]= node->keys[treshold+i];
                                 new_sibling->children[i]=
@@ -534,9 +541,10 @@ private:
                                 for(unsigned i=node->num_keys; i!=index; --i) {
                                         node->children[i]= node->children[i-1];
                                         node->keys[i]= node->keys[i-1];
-					/*_mm_clwb(&node->children[i]);
+					__dmb();
+					_mm_clwb(&node->children[i]);
 					_mm_clwb(&node->keys[i]);
-					__dmb();*/
+					__dmb();
                                 }
                                 node->children[index]= result.left;
                                 node->children[index+1]= result.right;

@@ -11,6 +11,24 @@
 
 #include "m5ops.h"
 
+
+
+#define gg_set_tx()\
+  asm volatile (".int 0xe320f005;")
+
+#define gg_reset_tx()\
+  asm volatile (".int 0xe320f010;")
+
+/*
+#define _mm_dcwb()                                                     \
+  __asm__ __volatile__ ("mcr p15, 0, %0, c7, c10, 0;" : : "r" (0) : "memory")
+
+#define _mm_clwb(p)                                                     \
+  __asm__ __volatile__ ("mcr p15, 0, %0, c7, c14, 1;" : : "r" (p) : "memory")
+
+#define __dmb() \
+  __asm__ __volatile__ ("mcr p15, 0, %0, c7, c10, 4;" : : "r" (0) : "memory")
+*/
 using std::vector;
 
 bool CustomerByNameOrdering::operator()(const Customer* a, const Customer* b) {
@@ -167,8 +185,6 @@ bool TPCCTables::newOrder(int32_t warehouse_id, int32_t district_id, int32_t cus
     gg_set_tx();
     bool result = newOrderHome(warehouse_id, district_id, customer_id, items, now, output, undo);
     if (!result) {
-      //__dmb();
-      gg_reset_tx();
         return false;
     }
 
@@ -180,7 +196,6 @@ bool TPCCTables::newOrder(int32_t warehouse_id, int32_t district_id, int32_t cus
         assert(result);
         newOrderCombine(quantities, output);
     }
-    //__dmb();
     gg_reset_tx();
     return true;
 }
@@ -194,18 +209,38 @@ bool TPCCTables::newOrderHome(int32_t warehouse_id, int32_t district_id, int32_t
     District* d = findDistrict(warehouse_id, district_id);
     output->d_tax = d->d_tax;
     output->o_id = d->d_next_o_id;
+    _mm_clwb(&output->d_tax);
+    _mm_clwb(&output->o_id);
+    __dmb();
     assert(findOrder(warehouse_id, district_id, output->o_id) == NULL);
 
     Customer* c = findCustomer(warehouse_id, district_id, customer_id);
     assert(sizeof(output->c_last) == sizeof(c->c_last));
     memcpy(output->c_last, c->c_last, sizeof(output->c_last));
+    for (int i = 0; i < sizeof(output->c_last); ) {
+      _mm_clwb(((char *)output->c_last) + i);
+      i+=64;
+    }
+    __dmb();
     memcpy(output->c_credit, c->c_credit, sizeof(output->c_credit));
+    for (int i = 0; i < sizeof(output->c_credit); ) {
+      _mm_clwb(((char *)output->c_credit) + i);
+      i+=64;
+    }
+    __dmb();
     output->c_discount = c->c_discount;
+    _mm_clwb(&output->c_discount);
+    __dmb();
 
     // CHEAT: Validate all items to see if we will need to abort
     vector<Item*> item_tuples(items.size());
     if (!findAndValidateItems(items, &item_tuples)) {
         strcpy(output->status, NewOrderOutput::INVALID_ITEM_STATUS);
+	for (int i = 0; i < sizeof(output->status); ) {
+	  _mm_clwb(((char *)output->status) + i);
+	  i+=64;
+	}
+	__dmb();
         return false;
     }
 
@@ -221,6 +256,8 @@ bool TPCCTables::newOrderHome(int32_t warehouse_id, int32_t district_id, int32_t
 
     // We will not abort: update the status and the database state, allocate an undo buffer
     output->status[0] = '\0';
+    _mm_clwb(&output->status[0]);
+    __dmb();
     allocateUndo(undo);
 
     // Modify the order id to assign it
@@ -228,9 +265,12 @@ bool TPCCTables::newOrderHome(int32_t warehouse_id, int32_t district_id, int32_t
         (*undo)->save(d);
     }
     d->d_next_o_id += 1;
-
+    _mm_clwb(&d->d_next_o_id);
+    __dmb();
     Warehouse* w = findWarehouse(warehouse_id);
     output->w_tax = w->w_tax;
+    _mm_clwb(&output->w_tax);
+    __dmb();
 
     Order order;
     order.o_w_id = warehouse_id;
@@ -254,9 +294,11 @@ bool TPCCTables::newOrderHome(int32_t warehouse_id, int32_t district_id, int32_t
     line.ol_d_id = district_id;
     line.ol_w_id = warehouse_id;
     memset(line.ol_delivery_d, 0, DATETIME_SIZE+1);
-
+    
     output->items.resize(items.size());
     output->total = 0;
+    _mm_clwb(&output->total);
+    __dmb();
     for (int i = 0; i < items.size(); ++i) {
         line.ol_number = i+1;
         line.ol_i_id = items[i].i_id;
@@ -275,17 +317,30 @@ bool TPCCTables::newOrderHome(int32_t warehouse_id, int32_t district_id, int32_t
         bool stock_is_original = (strstr(stock->s_data, "ORIGINAL") != NULL);
         if (stock_is_original && strstr(item_tuples[i]->i_data, "ORIGINAL") != NULL) {
             output->items[i].brand_generic = NewOrderOutput::ItemInfo::BRAND;
+	    _mm_clwb(&output->items[i].brand_generic);
         } else {
             output->items[i].brand_generic = NewOrderOutput::ItemInfo::GENERIC;
+	    _mm_clwb(&output->items[i].brand_generic);
         }
+	__dmb();
 
         assert(sizeof(output->items[i].i_name) == sizeof(item_tuples[i]->i_name));
         memcpy(output->items[i].i_name, item_tuples[i]->i_name, sizeof(output->items[i].i_name));
+	for (int i = 0; i < sizeof(output->items[i].i_name); ) {
+	  _mm_clwb(output->items[i].i_name + i);
+	  i+=64;
+	}
+	__dmb();
         output->items[i].i_price = item_tuples[i]->i_price;
         output->items[i].ol_amount =
                 static_cast<float>(items[i].ol_quantity) * item_tuples[i]->i_price;
+	_mm_clwb(&output->items[i].i_price);
+	_mm_clwb(&output->items[i].ol_amount);
+	__dmb();
         line.ol_amount = output->items[i].ol_amount;
         output->total += output->items[i].ol_amount;
+	_mm_clwb(&output->total);
+	__dmb();
         OrderLine* ol = insertOrderLine(line);
         if (undo != NULL) {
             (*undo)->inserted(ol);
@@ -319,6 +374,8 @@ bool TPCCTables::newOrderRemote(int32_t home_warehouse, int32_t remote_warehouse
         // Skip items that don't belong to remote warehouse
         if (items[i].ol_supply_w_id != remote_warehouse) {
             (*out_quantities)[i] = INVALID_QUANTITY;
+	    _mm_clwb(&(*out_quantities)[i]);
+	    __dmb();
             continue;
         }
 
@@ -329,19 +386,27 @@ bool TPCCTables::newOrderRemote(int32_t home_warehouse, int32_t remote_warehouse
         }
         if (stock->s_quantity >= items[i].ol_quantity + 10) {
             stock->s_quantity -= items[i].ol_quantity;
+	    _mm_clwb(&stock->s_quantity);
         } else {
             stock->s_quantity = stock->s_quantity - items[i].ol_quantity + 91;
+	    _mm_clwb(&stock->s_quantity);
         }
+	__dmb();
         (*out_quantities)[i] = stock->s_quantity;
         stock->s_ytd += items[i].ol_quantity;
         stock->s_order_cnt += 1;
+	
         // newOrderHome calls newOrderRemote, so this is needed
         if (items[i].ol_supply_w_id != home_warehouse) {
             // remote order
-            stock->s_remote_cnt += 1;
+   	    stock->s_remote_cnt += 1;
+	    _mm_clwb(&stock->s_remote_cnt);
         }
+	_mm_clwb(&(*out_quantities)[i]);
+	_mm_clwb(&stock->s_ytd);
+	_mm_clwb(&stock->s_order_cnt);
     }
-
+    __dmb();
     return true;
 }
 
@@ -363,12 +428,11 @@ void TPCCTables::payment(int32_t warehouse_id, int32_t district_id, int32_t c_wa
         int32_t c_district_id, int32_t customer_id, float h_amount, const char* now,
         PaymentOutput* output, TPCCUndo** undo) {
     //~ printf("payment %d %d %d %d %d %f %s\n", warehouse_id, district_id, c_warehouse_id, c_district_id, customer_id, h_amount, now);
-    gg_set_tx();
+  gg_set_tx();
     Customer* customer = findCustomer(c_warehouse_id, c_district_id, customer_id);
     paymentHome(warehouse_id, district_id, c_warehouse_id, c_district_id, customer_id, h_amount,
             now, output, undo);
     internalPaymentRemote(warehouse_id, district_id, customer, h_amount, output, undo);
-    //__dmb();
     gg_reset_tx();
 }
 
@@ -376,12 +440,11 @@ void TPCCTables::payment(int32_t warehouse_id, int32_t district_id, int32_t c_wa
         int32_t c_district_id, const char* c_last, float h_amount, const char* now,
         PaymentOutput* output, TPCCUndo** undo) {
     //~ printf("payment %d %d %d %d %s %f %s\n", warehouse_id, district_id, c_warehouse_id, c_district_id, c_last, h_amount, now);
-    gg_set_tx();
+  gg_set_tx();
     Customer* customer = findCustomerByName(c_warehouse_id, c_district_id, c_last);
     paymentHome(warehouse_id, district_id, c_warehouse_id, c_district_id, customer->c_id, h_amount,
             now, output, undo);
     internalPaymentRemote(warehouse_id, district_id, customer, h_amount, output, undo);
-    //__dmb();
     gg_reset_tx();
 }
 
@@ -394,36 +457,40 @@ void TPCCTables::payment(int32_t warehouse_id, int32_t district_id, int32_t c_wa
 
 #define ZERO_ADDRESS(output, prefix) \
     output->prefix ## street_1[0] = '\0'; \
+    _mm_clwb(&output->prefix ## street_1[0]);\
     output->prefix ## street_2[0] = '\0'; \
+    _mm_clwb(&output->prefix ## street_2[0]);\
     output->prefix ## city[0] = '\0'; \
+    _mm_clwb(&output->prefix ## city[0]);\
     output->prefix ## state[0] = '\0'; \
-    output->prefix ## zip[0] = '\0'
+    _mm_clwb(&output->prefix ## state[0]);\
+    output->prefix ## zip[0] = '\0';\
+    _mm_clwb(&output->prefix ## zip[0])
 
 static void zeroWarehouseDistrict(PaymentOutput* output) {
     // Zero the warehouse and district data
     // TODO: I should split this structure, but I'm lazy
     ZERO_ADDRESS(output, w_);
     ZERO_ADDRESS(output, d_);
+    __dmb();
 }
 
 void TPCCTables::paymentRemote(int32_t warehouse_id, int32_t district_id, int32_t c_warehouse_id,
         int32_t c_district_id, int32_t c_id, float h_amount, PaymentOutput* output,
         TPCCUndo** undo) {
-    gg_set_tx();
+  gg_set_tx();
     Customer* customer = findCustomer(c_warehouse_id, c_district_id, c_id);
     internalPaymentRemote(warehouse_id, district_id, customer, h_amount, output, undo);
     zeroWarehouseDistrict(output);
-    //__dmb();
     gg_reset_tx();
 }
 void TPCCTables::paymentRemote(int32_t warehouse_id, int32_t district_id, int32_t c_warehouse_id,
         int32_t c_district_id, const char* c_last, float h_amount, PaymentOutput* output,
         TPCCUndo** undo) {
-    gg_set_tx();
+  gg_set_tx();
     Customer* customer = findCustomerByName(c_warehouse_id, c_district_id, c_last);
     internalPaymentRemote(warehouse_id, district_id, customer, h_amount, output, undo);
     zeroWarehouseDistrict(output);
-    //__dmb();
     gg_reset_tx();
 }
 
@@ -436,15 +503,71 @@ void TPCCTables::paymentHome(int32_t warehouse_id, int32_t district_id, int32_t 
         (*undo)->save(w);
     }
     w->w_ytd += h_amount;
+    _mm_clwb(&w->w_ytd);
+    __dmb();
     COPY_ADDRESS(w, output, w_);
+    
+    for (int i = 0; i < sizeof(output->w_street_1);) {
+      _mm_clwb(((char *)output->w_street_1) + i);
+      i += 64;
+    }
+    
+    for (int i = 0; i < sizeof(output->w_street_2);) {
+      _mm_clwb(((char *)output->w_street_2) + i);
+      i += 64;
+    }
 
+    for (int i = 0; i < sizeof(output->w_city);) {
+      _mm_clwb(((char *)output->w_city) + i);
+      i += 64;
+    }
+
+    for (int i = 0; i < sizeof(output->w_state);) {
+      _mm_clwb(((char *)output->w_state) + i);
+      i += 64;
+    }
+
+    for (int i = 0; i < sizeof(output->w_zip);) {
+      _mm_clwb(((char *)output->w_zip) + i);
+      i += 64;
+    }
+    __dmb();
+    
     District* d = findDistrict(warehouse_id, district_id);
     if (undo != NULL) {
         (*undo)->save(d);
     }
     d->d_ytd += h_amount;
+    _mm_clwb(&d->d_ytd);
+    __dmb();
     COPY_ADDRESS(d, output, d_);
 
+    
+    for (int i = 0; i < sizeof(output->d_street_1);) {
+      _mm_clwb(((char *)output->d_street_1) + i);
+      i += 64;
+    }
+    
+    for (int i = 0; i < sizeof(output->d_street_2);) {
+      _mm_clwb(((char *)output->d_street_2) + i);
+      i += 64;
+    }
+
+    for (int i = 0; i < sizeof(output->d_city);) {
+      _mm_clwb(((char *)output->d_city) + i);
+      i += 64;
+    }
+
+    for (int i = 0; i < sizeof(output->d_state);) {
+      _mm_clwb(((char *)output->d_state) + i);
+      i += 64;
+    }
+
+    for (int i = 0; i < sizeof(output->d_zip);) {
+      _mm_clwb(((char *)output->d_zip) + i);
+      i += 64;
+    }
+    __dmb();
     // Insert the line into the history table
     History h;
     h.h_w_id = warehouse_id;
@@ -474,6 +597,17 @@ void TPCCTables::paymentHome(int32_t warehouse_id, int32_t district_id, int32_t 
     output->c_since[0] = '\0';
     output->c_credit[0] = '\0';
     output->c_data[0] = '\0';
+    _mm_clwb(&output->c_credit_lim);
+    _mm_clwb(&output->c_discount);
+    _mm_clwb(&output->c_balance);
+    _mm_clwb(&output->c_first[0]);
+    _mm_clwb(&output->c_middle[0]);
+    _mm_clwb(&output->c_last[0]);
+    _mm_clwb(&output->c_phone[0]);
+    _mm_clwb(&output->c_since[0]);
+    _mm_clwb(&output->c_credit[0]);
+    _mm_clwb(&output->c_data[0]);
+    __dmb();
 }
 
 void TPCCTables::internalPaymentRemote(int32_t warehouse_id, int32_t district_id, Customer* c,
@@ -485,6 +619,10 @@ void TPCCTables::internalPaymentRemote(int32_t warehouse_id, int32_t district_id
     c->c_balance -= h_amount;
     c->c_ytd_payment += h_amount;
     c->c_payment_cnt += 1;
+    _mm_clwb(&c->c_balance);
+    _mm_clwb(&c->c_ytd_payment);
+    _mm_clwb(&c->c_payment_cnt);
+    __dmb();
     if (strcmp(c->c_credit, Customer::BAD_CREDIT) == 0) {
         // Bad credit: insert history into c_data
         static const int HISTORY_SIZE = Customer::MAX_DATA+1;
@@ -502,22 +640,73 @@ void TPCCTables::internalPaymentRemote(int32_t warehouse_id, int32_t district_id
         memmove(c->c_data+characters, c->c_data, current_keep);
         memcpy(c->c_data, history, characters);
         c->c_data[characters + current_keep] = '\0';
+	for (int i = 0; i < current_keep;) {
+	  _mm_clwb(((char *)c->c_data+characters)+i);
+	  i += 64;
+	}
+	__dmb();
+	for (int i = 0; i < characters;) {
+	  _mm_clwb(((char *)c->c_data)+i);
+	  i += 64;
+	}
+	__dmb();
+	_mm_clwb(&c->c_data[characters + current_keep]);
+	__dmb();
         assert(strlen(c->c_data) == characters + current_keep);
     }
 
     output->c_credit_lim = c->c_credit_lim;
     output->c_discount = c->c_discount;
     output->c_balance = c->c_balance;
+    _mm_clwb(&output->c_credit_lim);
+    _mm_clwb(&output->c_discount);
+    _mm_clwb(&output->c_balance);
+    __dmb();
 #define COPY_STRING(dest, src, field) memcpy(dest->field, src->field, sizeof(src->field))
     COPY_STRING(output, c, c_first);
+    for (int i = 0; i < sizeof(c->c_first);) {
+      _mm_clwb(((char *)output->c_first)+i);
+      i += 64;
+    }
+    __dmb();
     COPY_STRING(output, c, c_middle);
+    for (int i = 0; i < sizeof(c->c_middle);) {
+      _mm_clwb(((char *)output->c_middle)+i);
+      i += 64;
+    }
+    __dmb();
     COPY_STRING(output, c, c_last);
+    for (int i = 0; i < sizeof(c->c_last);) {
+      _mm_clwb(((char *)output->c_last)+i);
+      i += 64;
+    }
+    __dmb();
     COPY_ADDRESS(c, output, c_);
     COPY_STRING(output, c, c_phone);
+    for (int i = 0; i < sizeof(c->c_phone);) {
+      _mm_clwb(((char *)output->c_phone)+i);
+      i += 64;
+    }
+    __dmb();
     COPY_STRING(output, c, c_since);
+    for (int i = 0; i < sizeof(c->c_since);) {
+      _mm_clwb(((char *)output->c_since)+i);
+      i += 64;
+    }
+    __dmb();
     COPY_STRING(output, c, c_credit);
+    for (int i = 0; i < sizeof(c->c_credit);) {
+      _mm_clwb(((char *)output->c_credit)+i);
+      i += 64;
+    }
+    __dmb();
     COPY_STRING(output, c, c_data);
+    for (int i = 0; i < sizeof(c->c_data);) {
+      _mm_clwb(((char *)output->c_data)+i);
+      i += 64;
+    }
 #undef COPY_STRING
+    __dmb();
 }
 
 #undef ZERO_ADDRESS
@@ -529,7 +718,7 @@ static int64_t makeNewOrderKey(int32_t w_id, int32_t d_id, int32_t o_id);
 void TPCCTables::delivery(int32_t warehouse_id, int32_t carrier_id, const char* now,
         std::vector<DeliveryOrderInfo>* orders, TPCCUndo** undo) {
     //~ printf("delivery %d %d %s\n", warehouse_id, carrier_id, now);
-    gg_set_tx();
+  gg_set_tx();
     allocateUndo(undo);
     orders->clear();
     for (int32_t d_id = 1; d_id <= District::NUM_PER_WAREHOUSE; ++d_id) {
@@ -587,7 +776,6 @@ void TPCCTables::delivery(int32_t warehouse_id, int32_t carrier_id, const char* 
         c->c_balance += total;
         c->c_delivery_cnt += 1;
     }
-    //__dmb();
     gg_reset_tx();
 }
 
@@ -885,7 +1073,10 @@ NewOrder* TPCCTables::insertNewOrder(int32_t w_id, int32_t d_id, int32_t o_id) {
     neworder->no_w_id = w_id;
     neworder->no_d_id = d_id;
     neworder->no_o_id = o_id;
-
+    _mm_clwb(&neworder->no_w_id);
+    _mm_clwb(&neworder->no_d_id);
+    _mm_clwb(&neworder->no_o_id);
+    __dmb();
     return insertNewOrderObject(&neworders_, neworder);
 }
 
